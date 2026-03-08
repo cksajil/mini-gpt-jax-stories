@@ -1,0 +1,11 @@
+jax
+jaxlib
+flax
+optax
+orbax-checkpoint
+numpy
+pandas
+tiktoken
+pyyaml
+matplotlib
+pytest

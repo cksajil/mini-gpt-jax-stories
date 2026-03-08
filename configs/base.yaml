@@ -1,0 +1,27 @@
+data:
+  train_csv: "/kaggle/input/datasets/thedevastator/tinystories-narrative-classification/train.csv"
+  valid_csv: "/kaggle/input/datasets/thedevastator/tinystories-narrative-classification/validation.csv"
+  max_train_stories: 200000
+  max_valid_stories: 10000
+  max_len: 128
+  token_cache_dir: "/kaggle/working/token_cache"
+
+model:
+  vocab_name: "gpt2"
+  embed_dim: 192
+  num_heads: 6
+  num_layers: 6
+  mlp_dim: 768
+
+train:
+  batch_size: 64
+  num_epochs: 3
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  warmup_frac: 0.1
+  grad_clip_norm: 1.0
+  seed: 42
+
+output:
+  checkpoint_dir: "/kaggle/working/checkpoints"
+  metrics_dir: "/kaggle/working/outputs"

@@ -2,174 +2,187 @@ import json
 from pathlib import Path
 
 import gradio as gr
+import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
 import orbax.checkpoint as ocp
 import tiktoken
 
 
-# -------------------------
-# Load config
-# -------------------------
 BASE_DIR = Path(__file__).parent
 
 with open(BASE_DIR / "config.json", "r") as f:
     cfg = json.load(f)
 
-maxlen = cfg["maxlen"]
-vocab_size = cfg["vocab_size"]
-embed_dim = cfg["embed_dim"]
-num_heads = cfg["num_heads"]
-feed_forward_dim = cfg["feed_forward_dim"]
-num_transformer_blocks = cfg["num_transformer_blocks"]
+MAX_LEN = cfg["max_len"]
+VOCAB_NAME = cfg["vocab_name"]
+VOCAB_SIZE = cfg["vocab_size"]
+EMBED_DIM = cfg["embed_dim"]
+NUM_HEADS = cfg["num_heads"]
+NUM_LAYERS = cfg["num_layers"]
+MLP_DIM = cfg["mlp_dim"]
+PAD_ID = cfg["pad_id"]
+EOT_ID = cfg["eot_id"]
 
-tokenizer = tiktoken.get_encoding(cfg.get("tokenizer_name", "gpt2"))
-eot_id = tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
+tokenizer = tiktoken.get_encoding(VOCAB_NAME)
 
 
-# -------------------------
-# Model definition
-# -------------------------
-class TransformerBlock(nnx.Module):
-    def __init__(self, embed_dim, num_heads, ff_dim, *, rngs):
-        self.attention = nnx.MultiHeadAttention(
+class CausalSelfAttention(nnx.Module):
+    def __init__(self, embed_dim, num_heads, *, rngs):
+        self.attn = nnx.MultiHeadAttention(
             num_heads=num_heads,
             in_features=embed_dim,
             qkv_features=embed_dim,
             out_features=embed_dim,
+            decode=False,
             rngs=rngs,
-        )
-        self.ffn = nnx.Sequential(
-            nnx.Linear(embed_dim, ff_dim, rngs=rngs),
-            nnx.relu,
-            nnx.Linear(ff_dim, embed_dim, rngs=rngs),
         )
 
     def __call__(self, x, mask=None):
-        x = x + self.attention(x, mask=mask)
-        x = x + self.ffn(x)
+        return self.attn(x, mask=mask)
+
+
+class MLP(nnx.Module):
+    def __init__(self, embed_dim, mlp_dim, *, rngs):
+        self.fc1 = nnx.Linear(embed_dim, mlp_dim, rngs=rngs)
+        self.fc2 = nnx.Linear(mlp_dim, embed_dim, rngs=rngs)
+
+    def __call__(self, x):
+        x = self.fc1(x)
+        x = jax.nn.gelu(x)
+        x = self.fc2(x)
+        return x
+
+
+class TransformerBlock(nnx.Module):
+    def __init__(self, embed_dim, num_heads, mlp_dim, *, rngs):
+        self.ln1 = nnx.LayerNorm(embed_dim, rngs=rngs)
+        self.attn = CausalSelfAttention(embed_dim, num_heads, rngs=rngs)
+        self.ln2 = nnx.LayerNorm(embed_dim, rngs=rngs)
+        self.mlp = MLP(embed_dim, mlp_dim, rngs=rngs)
+
+    def __call__(self, x, mask=None):
+        x = x + self.attn(self.ln1(x), mask=mask)
+        x = x + self.mlp(self.ln2(x))
         return x
 
 
 class TokenAndPositionEmbedding(nnx.Module):
-    def __init__(self, maxlen, vocab_size, embed_dim, *, rngs):
+    def __init__(self, max_len, vocab_size, embed_dim, *, rngs):
         self.token_emb = nnx.Embed(vocab_size, embed_dim, rngs=rngs)
-        self.pos_emb = nnx.Embed(maxlen, embed_dim, rngs=rngs)
+        self.pos_emb = nnx.Embed(max_len, embed_dim, rngs=rngs)
 
     def __call__(self, token_ids):
-        positions = jnp.arange(token_ids.shape[1])[None, :]
+        seq_len = token_ids.shape[1]
+        positions = jnp.arange(seq_len)[None, :]
         return self.token_emb(token_ids) + self.pos_emb(positions)
 
 
 class MiniGPT(nnx.Module):
     def __init__(
-        self,
-        maxlen=maxlen,
-        vocab_size=vocab_size,
-        embed_dim=embed_dim,
-        num_heads=num_heads,
-        feed_forward_dim=feed_forward_dim,
-        num_transformer_blocks=num_transformer_blocks,
-        *,
-        rngs=nnx.Rngs(0),
+        self, max_len, vocab_size, embed_dim, num_heads, mlp_dim, num_layers, *, rngs
     ):
-        self.maxlen = maxlen
+        self.max_len = max_len
         self.embedding = TokenAndPositionEmbedding(
-            maxlen, vocab_size, embed_dim, rngs=rngs
+            max_len, vocab_size, embed_dim, rngs=rngs
         )
-        self.transformer_blocks = [
-            TransformerBlock(embed_dim, num_heads, feed_forward_dim, rngs=rngs)
-            for _ in range(num_transformer_blocks)
+        self.blocks = [
+            TransformerBlock(embed_dim, num_heads, mlp_dim, rngs=rngs)
+            for _ in range(num_layers)
         ]
-        self.output_layer = nnx.Linear(embed_dim, vocab_size, use_bias=False, rngs=rngs)
+        self.ln_f = nnx.LayerNorm(embed_dim, rngs=rngs)
+        self.lm_head = nnx.Linear(embed_dim, vocab_size, use_bias=False, rngs=rngs)
 
     def causal_attention_mask(self, seq_len):
-        return jnp.tril(jnp.ones((seq_len, seq_len)))
+        mask = jnp.tril(jnp.ones((seq_len, seq_len), dtype=jnp.bool_))
+        return mask[None, None, :, :]
 
     def __call__(self, token_ids):
         seq_len = token_ids.shape[1]
         mask = self.causal_attention_mask(seq_len)
-
         x = self.embedding(token_ids)
-        for block in self.transformer_blocks:
+        for block in self.blocks:
             x = block(x, mask=mask)
+        x = self.ln_f(x)
+        return self.lm_head(x)
 
-        logits = self.output_layer(x)
-        return logits
 
-
-# -------------------------
-# Load checkpoint
-# -------------------------
-model = MiniGPT()
-
-checkpoint_path = BASE_DIR / "small_checkpoint.orbax"
-checkpointer = ocp.PyTreeCheckpointer()
-
-restored_state = checkpointer.restore(
-    checkpoint_path,
-    item=nnx.state(model),
+model = MiniGPT(
+    max_len=MAX_LEN,
+    vocab_size=VOCAB_SIZE,
+    embed_dim=EMBED_DIM,
+    num_heads=NUM_HEADS,
+    mlp_dim=MLP_DIM,
+    num_layers=NUM_LAYERS,
+    rngs=nnx.Rngs(42),
 )
+
+checkpoint_path = BASE_DIR / "best_model"
+ckptr = ocp.PyTreeCheckpointer()
+
+restored_state = ckptr.restore(checkpoint_path, item=nnx.state(model))
 nnx.update(model, restored_state)
 
 
-# -------------------------
-# Generation
-# -------------------------
-def generate_text(model, start_tokens, max_new_tokens=50, temperature=1.0):
-    tokens = list(start_tokens)
+def generate_text(prompt, temperature=0.9, max_new_tokens=80, top_k=40):
+    token_ids = tokenizer.encode(prompt, allowed_special={"<|endoftext|>"})
+    token_ids = token_ids[:MAX_LEN]
 
     for _ in range(max_new_tokens):
-        context = tokens[-model.maxlen :]
-        actual_len = len(context)
+        context = token_ids[-MAX_LEN:]
+        x = [PAD_ID] * MAX_LEN
+        x[: len(context)] = context
+        x = jnp.asarray([x], dtype=jnp.int32)
 
-        if actual_len < model.maxlen:
-            context = context + [0] * (model.maxlen - actual_len)
+        logits = model(x)
+        next_logits = logits[0, len(context) - 1] / max(float(temperature), 1e-6)
 
-        context_array = jnp.array(context)[None, :]
-        logits = model(context_array)
+        if top_k is not None and top_k < next_logits.shape[-1]:
+            top_vals, top_idx = jax.lax.top_k(next_logits, int(top_k))
+            probs = jax.nn.softmax(top_vals)
+            sampled_local = int(
+                jax.random.categorical(
+                    jax.random.PRNGKey(len(token_ids)), jnp.log(probs)
+                )
+            )
+            next_token = int(top_idx[sampled_local])
+        else:
+            probs = jax.nn.softmax(next_logits)
+            next_token = int(
+                jax.random.categorical(
+                    jax.random.PRNGKey(len(token_ids)), jnp.log(probs)
+                )
+            )
 
-        next_token_logits = logits[0, actual_len - 1, :] / max(temperature, 1e-6)
-        next_token = int(jnp.argmax(next_token_logits))
+        token_ids.append(next_token)
 
-        if next_token == eot_id:
+        if next_token == EOT_ID:
             break
 
-        tokens.append(next_token)
-
-    return tokenizer.decode(tokens)
+    return tokenizer.decode(token_ids)
 
 
-def create_story(story_prompt, temperature, max_new_tokens):
-    if not story_prompt or not story_prompt.strip():
+def app_generate(prompt, temperature, max_new_tokens, top_k):
+    if not prompt.strip():
         return "Please enter a prompt."
-
-    start_tokens = tokenizer.encode(story_prompt)[:maxlen]
-    return generate_text(
-        model,
-        start_tokens,
-        max_new_tokens=int(max_new_tokens),
-        temperature=float(temperature),
-    )
+    return generate_text(prompt, temperature, max_new_tokens, top_k)
 
 
-# -------------------------
-# Gradio app
-# -------------------------
 demo = gr.Interface(
-    fn=create_story,
+    fn=app_generate,
     inputs=[
         gr.Textbox(
-            label="Story Prompt",
+            label="Prompt",
             lines=4,
-            placeholder="A little fox found a glowing lantern in the forest...",
+            placeholder="Once upon a time in a quiet village...",
         ),
-        gr.Slider(minimum=0.1, maximum=1.5, value=0.8, step=0.05, label="Temperature"),
-        gr.Slider(minimum=10, maximum=200, value=50, step=5, label="Max Tokens"),
+        gr.Slider(0.2, 1.5, value=0.9, step=0.1, label="Temperature"),
+        gr.Slider(20, 200, value=80, step=10, label="Max new tokens"),
+        gr.Slider(10, 100, value=40, step=5, label="Top-k"),
     ],
-    outputs=gr.Textbox(label="Generated Story", lines=14),
+    outputs=gr.Textbox(label="Generated story", lines=18),
     title="MiniGPT JAX Story Generator",
-    description="Generate short story continuations with a MiniGPT model trained in JAX.",
+    description="Short-story generation demo built in JAX/Flax NNX.",
 )
 
 if __name__ == "__main__":

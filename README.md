@@ -7,7 +7,6 @@ A MiniGPT-style autoregressive language model built in JAX/Flax NNX and trained 
 - Optimized training for Kaggle free-tier hardware
 - Reduced training bottlenecks with offline tokenization and memory-mapped batches
 - Logged throughput, validation loss, and generated samples
-- Designed as a recruiter-facing portfolio project for practical model engineering
 
 ## Results
 - Dataset: 200,000 short stories
@@ -23,12 +22,6 @@ A MiniGPT-style autoregressive language model built in JAX/Flax NNX and trained 
 ## Sample Outputs
 ```
 ```
-
-## Benchmarks
-| Version | Batch Size | Tokens/sec | Epoch Time |
-|---|---:|---:|---:|
-| Baseline kaggle notebook | ... | ... | ... |
-| Optimized kaggle notebook | ... | ... | ... |
 
 ## Lessons Learned
 - Python-side tokenization can dominate wall-clock time

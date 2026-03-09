@@ -16,14 +16,11 @@ A MiniGPT-style autoregressive language model built in JAX/Flax NNX and trained 
 - Hardware: Kaggle free-tier GPU
 - Key improvement: pretokenization + streamlined JAX training loop
 
-## 🤖 MiniGPT Story Generator Demo
+## 🚀 Live Demo
 
-<iframe
-	src="https://huggingface.co/spaces/sajilck/mini_story_generator"
-	frameborder="0"
-	width="850"
-	height="500"
-></iframe>
+Try the app here: [Mini Story Generator on Hugging Face Spaces](https://huggingface.co/spaces/sajilck/mini_story_generator)
+
+[![Hugging Face Space](https://img.shields.io/badge/🤗%20HuggingFace-Live%20Demo-yellow)](https://huggingface.co/spaces/sajilck/mini_story_generator)
 
 ## Lessons Learned
 - Python-side tokenization can dominate wall-clock time
@@ -33,4 +30,3 @@ A MiniGPT-style autoregressive language model built in JAX/Flax NNX and trained 
 ## Future Work
 - Flash attention or scaled-dot-product attention optimization
 - Better evaluation with perplexity and held-out prompts
-- Deploy story generator as a Hugging Face Space or Streamlit app

@@ -1,0 +1,11 @@
+{
+  "max_len": 128,
+  "vocab_name": "gpt2",
+  "vocab_size": 50257,
+  "embed_dim": 192,
+  "num_heads": 6,
+  "num_layers": 6,
+  "mlp_dim": 768,
+  "pad_id": 0,
+  "eot_id": 50256
+}

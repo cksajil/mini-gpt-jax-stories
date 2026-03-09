@@ -1,3 +1,15 @@
+---
+title: MiniGPT JAX Story Generator
+emoji: 📚
+colorFrom: indigo
+colorTo: blue
+sdk: gradio
+sdk_version: 6.9.0
+python_version: 3.11
+app_file: app.py
+pinned: false
+---
+
 # MiniGPT-JAX for Short Story Generation
 
 A MiniGPT-style autoregressive language model built in JAX/Flax NNX and trained on 200k short stories.

@@ -20,6 +20,7 @@ A MiniGPT-style autoregressive language model built in JAX/Flax NNX and trained 
 
 Try the app here: [Mini Story Generator on Hugging Face Spaces](https://huggingface.co/spaces/sajilck/mini_story_generator)
 
+![](/static/ui.png)
 [![Hugging Face Space](https://img.shields.io/badge/🤗%20HuggingFace-Live%20Demo-yellow)](https://huggingface.co/spaces/sajilck/mini_story_generator)
 
 ## Lessons Learned

@@ -11,10 +11,13 @@ A MiniGPT-style autoregressive language model built in JAX/Flax NNX and trained 
 
 ## Results
 - Dataset: 200,000 short stories
-- Context length: 128
-- Model: 6-layer MiniGPT
+- Model: 6-layer decoder-only transformer, 6 heads, embedding size 192, MLP size 768, context length 128, GPT-2 tokenizer (see [`config.json`](config.json))
 - Hardware: Kaggle free-tier GPU
+- Training: 15 epochs (about 8 minutes each, ~2 hours in total) at ~55,000 tokens/s
+- **Validation loss 2.67 after epoch 1 → 1.65 after epoch 15** (perplexity ≈ 5.2); training loss 1.45, so the model is not badly overfitting
 - Key improvement: pretokenization + streamlined JAX training loop
+
+The full training log is in [`notebooks/gpt-mini-jax.ipynb`](notebooks/gpt-mini-jax.ipynb).
 
 ## 🚀 Live Demo
 
@@ -30,4 +33,4 @@ Try the app here: [Mini Story Generator on Hugging Face Spaces](https://huggingf
 
 ## Future Work
 - Flash attention or scaled-dot-product attention optimization
-- Better evaluation with perplexity and held-out prompts
+- Evaluation on held-out prompts beyond validation loss and perplexity
